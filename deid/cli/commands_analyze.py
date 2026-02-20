@@ -41,6 +41,7 @@ from deid.plate_state.stage_plate_state import plate_state_stage
 from deid.events.stage_event_extract import event_extract_stage
 from deid.fusion.stage_fusion import fusion_stage
 from deid.swe.stage_swe_closure import swe_closure_stage
+from deid.inference.stage_inference import inference_stage
 
 
 # -------------------------------------------------------------------
@@ -187,6 +188,7 @@ def analyze_command(
         "event_extract": event_extract_stage,
         "fusion": fusion_stage,
         "swe_closure": swe_closure_stage,
+        "inference": inference_stage,
     }
 
     inputs = {
@@ -204,7 +206,7 @@ def analyze_command(
         input_hashes=input_hashes,
         inputs=inputs,
         stage_fns=stage_fns,
-        stop_after_stage="swe_closure",
+        stop_after_stage="ingest",
     )
 
     typer.echo("")
