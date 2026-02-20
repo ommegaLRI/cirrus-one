@@ -1,0 +1,16 @@
+ingest:
+  timezone: "America/New_York"
+  hdf5_dataset_path: null
+
+storage:
+  run_root: "./runs"
+
+runner:
+  allow_stage_skip: true
+  fail_fast: true
+
+alignment: {}
+plate_state: {}
+event_extraction: {}
+swe: {}
+inference: {}
