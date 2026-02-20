@@ -36,6 +36,12 @@ from deid.runner import run_pipeline
 from deid.storage.io import write_json, write_parquet
 from deid.storage.paths import inputs_dir
 
+from deid.alignment.stage_alignment import alignment_stage
+from deid.plate_state.stage_plate_state import plate_state_stage
+from deid.events.stage_event_extract import event_extract_stage
+from deid.fusion.stage_fusion import fusion_stage
+from deid.swe.stage_swe_closure import swe_closure_stage
+
 
 # -------------------------------------------------------------------
 # Config loading
@@ -176,6 +182,11 @@ def analyze_command(
     # Stage registry
     stage_fns = {
         "ingest": ingest_stage,
+        "alignment": alignment_stage,
+        "plate_state": plate_state_stage,
+        "event_extract": event_extract_stage,
+        "fusion": fusion_stage,
+        "swe_closure": swe_closure_stage,
     }
 
     inputs = {
@@ -193,7 +204,7 @@ def analyze_command(
         input_hashes=input_hashes,
         inputs=inputs,
         stage_fns=stage_fns,
-        stop_after_stage="ingest",
+        stop_after_stage="swe_closure",
     )
 
     typer.echo("")
