@@ -113,9 +113,13 @@ def build_session_alignment(
     if dt_missing:
         try:
             fallback_dt = float(config.get("fallback_dt_seconds", 1.0))
-            tb.dt_seconds = fallback_dt
-            tb.source = tb.source or "thermal_inferred"
-            tb.confidence = float(min(getattr(tb, "confidence", 0.1), 0.1))
+            tb = FrameTimebase(
+                t0_utc=tb.t0_utc,
+                dt_seconds=fallback_dt,
+                frame_timestamps_utc=tb.frame_timestamps_utc,
+                source=tb.source or "thermal_inferred",
+                confidence=float(min(getattr(tb, "confidence", 0.1), 0.1)),
+            )
         except Exception:
             pass
 
@@ -126,13 +130,18 @@ def build_session_alignment(
         epoch0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
         dt_val = float(tb.dt_seconds)
 
-        tb.frame_timestamps_utc = [
-            epoch0 + timedelta(seconds=i * dt_val)
+        new_frame_ts = [
+            (epoch0 + timedelta(seconds=i * dt_val)).isoformat()
             for i in range(T)
         ]
 
-        tb.source = tb.source or "thermal_inferred"
-        tb.confidence = float(min(getattr(tb, "confidence", 0.1), 0.1))
+        tb = FrameTimebase(
+            t0_utc=tb.t0_utc,
+            dt_seconds=tb.dt_seconds,
+            frame_timestamps_utc=new_frame_ts,
+            source=tb.source or "thermal_inferred",
+            confidence=float(min(getattr(tb, "confidence", 0.1), 0.1)),
+        )
 
     # =============================================================
     # Integrity report (gaps/flags)

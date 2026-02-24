@@ -38,6 +38,8 @@ def get_stage_defs() -> Dict[str, StageDef]:
             outputs=[
                 "inputs/manifest.json",
                 "inputs/thermal_ref.json",
+            ],
+            optional_inputs=[
                 "inputs/particle.parquet",
                 "inputs/processed.parquet",
             ],
@@ -69,17 +71,17 @@ def get_stage_defs() -> Dict[str, StageDef]:
             optional_inputs=["inputs/processed.parquet"],
             outputs=["outputs/swe_products.parquet", "outputs/closure_report.json"],
         ),
-        StageDef(
-            id="inference",
-            depends_on=["swe_closure", "plate_state"],
-            gated_by=["intermediate/instrument_health.json", "outputs/closure_report.json"],
-            outputs=["outputs/findings.json", "outputs/regimes.json", "outputs/latent.json", "outputs/inference_skipped.json"],
-        ),
-        StageDef(
-            id="report",
-            depends_on=["ingest", "alignment", "plate_state", "event_extract", "fusion", "swe_closure", "inference"],
-            outputs=["outputs/qc_summary.json"],
-        ),
+        # StageDef(
+        #     id="inference",
+        #     depends_on=["swe_closure", "plate_state"],
+        #     gated_by=["intermediate/instrument_health.json", "outputs/closure_report.json"],
+        #     outputs=["outputs/findings.json", "outputs/regimes.json", "outputs/latent.json", "outputs/inference_skipped.json"],
+        # ),
+        # StageDef(
+        #     id="report",
+        #     depends_on=["ingest", "alignment", "plate_state", "event_extract", "fusion", "swe_closure", "inference"],
+        #     outputs=["outputs/qc_summary.json"],
+        # ),
     ]
 
     return {s.id: s for s in stages}

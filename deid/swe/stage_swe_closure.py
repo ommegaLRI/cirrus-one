@@ -14,7 +14,7 @@ import pandas as pd
 
 from deid.config.models import DEIDConfig
 from deid.storage.io import read_json, read_parquet, write_parquet, write_json, wrap_artifact
-from deid.storage.paths import intermediate_dir, inputs_dir
+from deid.storage.paths import intermediate_dir, inputs_dir, outputs_dir
 from deid.core.logging import log_info
 
 from deid.swe.calibrators.energy_linear import EnergyLinearCalibrator
@@ -35,13 +35,15 @@ def swe_closure_stage(run_dir: Path, inputs: Dict[str, Any], config: DEIDConfig,
     input_hashes = inputs.get("input_hashes", {})
 
     inp_dir = inputs_dir(run_dir)
-    out_dir = intermediate_dir(run_dir)
+    out_dir = outputs_dir(run_dir)
 
     # -------------------------------------------------------------
     # Load inputs
     # -------------------------------------------------------------
-    event_df = read_parquet(out_dir / "event_catalog.parquet")
-    alignment = _load_wrapped(out_dir / "alignment.json")
+    int_dir = intermediate_dir(run_dir)
+
+    event_df = read_parquet(int_dir / "event_catalog.parquet")
+    alignment = _load_wrapped(int_dir / "alignment.json")
 
     # Rehydrate timestamps (JSON → datetime objects)
     frame_timebase = alignment.get("frame_timebase", {})
@@ -60,7 +62,17 @@ def swe_closure_stage(run_dir: Path, inputs: Dict[str, Any], config: DEIDConfig,
     processed_df = None
     ppath = inp_dir / "processed.parquet"
     if ppath.exists():
-        processed_df = read_parquet(ppath)
+        _df = read_parquet(ppath)
+        # Only accept processed data if schema is valid
+        if isinstance(_df, pd.DataFrame) and (not _df.empty) and {"t_utc", "swe_mm"}.issubset(_df.columns):
+            processed_df = _df
+        else:
+            log_info(
+                "processed_missing_or_invalid_schema_skipping",
+                path=str(ppath),
+                columns=list(_df.columns) if isinstance(_df, pd.DataFrame) else None,
+                n_rows=int(len(_df)) if isinstance(_df, pd.DataFrame) else None,
+            )
 
     try:
         swe_cfg = dict(config.swe)

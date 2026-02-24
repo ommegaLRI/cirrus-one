@@ -58,7 +58,13 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+
+
+# ----------------------
+# Test runs
+# ----------------------
 tests/samples/
+runs/
 
 # ----------------------
 # Type checkers / linters
