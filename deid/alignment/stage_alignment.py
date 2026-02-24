@@ -5,15 +5,6 @@ deid.alignment.stage_alignment
 Runner stage implementation:
 
 Stage B — Alignment + Integrity
-
-Inputs (from ingest stage):
-    inputs/thermal_ref.json
-    inputs/particle.parquet   (optional)
-    inputs/processed.parquet  (optional)
-
-Outputs:
-    intermediate/alignment.json
-    intermediate/integrity.json
 """
 
 from __future__ import annotations
@@ -22,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
+import numpy as np
+from datetime import datetime, timezone, timedelta
 
 from deid.alignment.aligner import build_session_alignment
 from deid.config.models import DEIDConfig
@@ -41,7 +34,6 @@ from deid.storage.paths import inputs_dir, intermediate_dir
 def _load_thermal_ref(run_dir: Path) -> ThermalCubeRef:
     ref_path = inputs_dir(run_dir) / "thermal_ref.json"
     data = read_json(ref_path)
-    # Stored as dict during ingest
     return ThermalCubeRef(**data)
 
 
@@ -62,18 +54,6 @@ def alignment_stage(
     config: DEIDConfig,
     context: Dict[str, Any],
 ) -> None:
-    """
-    Execute alignment stage.
-
-    Parameters
-    ----------
-    run_dir : Path
-    inputs : dict
-        Runner input dict (contains config_hash + input_hashes).
-    config : DEIDConfig
-    context : dict
-        pipeline metadata
-    """
 
     log_info("alignment_stage_start", run_dir=str(run_dir))
 
@@ -112,6 +92,45 @@ def alignment_stage(
         particle_table=particle_df,
         processed_series=processed_df,
         config=align_cfg,
+    )
+
+    # ===============================================================
+    # 🔵 ENFORCE FRAME TIMEBASE INVARIANT (CRITICAL FIX)
+    # ===============================================================
+
+    ftb = alignment_dict.get("frame_timebase", {})
+
+    dt = ftb.get("dt_seconds")
+    dt_missing = (
+        dt is None
+        or (isinstance(dt, float) and np.isnan(dt))
+    )
+
+    if dt_missing:
+        dt = float(align_cfg.get("fallback_dt_seconds", 1.0))
+        ftb["dt_seconds"] = dt
+        ftb["source"] = ftb.get("source") or "thermal_inferred"
+        ftb["confidence"] = float(min(ftb.get("confidence", 0.1), 0.1))
+
+    if ftb.get("frame_timestamps_utc") is None:
+        T = int(thermal_ref.shape[0])
+        epoch0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+        ftb["frame_timestamps_utc"] = [
+            (epoch0 + timedelta(seconds=i * float(dt))).isoformat()
+            for i in range(T)
+        ]
+
+        ftb["source"] = ftb.get("source") or "thermal_inferred"
+        ftb["confidence"] = float(min(ftb.get("confidence", 0.1), 0.1))
+
+    alignment_dict["frame_timebase"] = ftb
+
+    # 🔍 Debug proof that invariant is satisfied
+    log_info(
+        "alignment_timebase_final",
+        dt_seconds=ftb.get("dt_seconds"),
+        n_frame_ts=len(ftb.get("frame_timestamps_utc") or []),
     )
 
     # ---------------------------------------------------------------

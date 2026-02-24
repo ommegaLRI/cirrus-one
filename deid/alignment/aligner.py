@@ -18,7 +18,7 @@ This is a v1 alignment: constant-cadence spine with nearest-frame mapping.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -73,6 +73,18 @@ def _median_offset_seconds(tb: FrameTimebase, mapping: Dict[str, int], times: Di
     return float(np.median(np.array(resids, dtype=float)))
 
 
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, Tuple
+import numpy as np
+import pandas as pd
+
+
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, Tuple
+import numpy as np
+import pandas as pd
+
+
 def build_session_alignment(
     thermal_ref: ThermalCubeRef,
     particle_table: Optional[pd.DataFrame],
@@ -85,10 +97,46 @@ def build_session_alignment(
     """
     T, _, _ = thermal_ref.shape
 
-    # Build timebase
+    # -------------------------------------------------------------
+    # Build timebase from upstream logic
+    # -------------------------------------------------------------
     tb = build_frame_timebase(thermal_ref, particle_table, processed_series, config)
 
+    # =============================================================
+    # Robust cadence fallback (handles None AND NaN)
+    # =============================================================
+    dt_missing = (
+        tb.dt_seconds is None
+        or (isinstance(tb.dt_seconds, float) and np.isnan(tb.dt_seconds))
+    )
+
+    if dt_missing:
+        try:
+            fallback_dt = float(config.get("fallback_dt_seconds", 1.0))
+            tb.dt_seconds = fallback_dt
+            tb.source = tb.source or "thermal_inferred"
+            tb.confidence = float(min(getattr(tb, "confidence", 0.1), 0.1))
+        except Exception:
+            pass
+
+    # =============================================================
+    # Timestamp axis fallback (synthetic, monotonic)
+    # =============================================================
+    if tb.frame_timestamps_utc is None and tb.dt_seconds is not None:
+        epoch0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        dt_val = float(tb.dt_seconds)
+
+        tb.frame_timestamps_utc = [
+            epoch0 + timedelta(seconds=i * dt_val)
+            for i in range(T)
+        ]
+
+        tb.source = tb.source or "thermal_inferred"
+        tb.confidence = float(min(getattr(tb, "confidence", 0.1), 0.1))
+
+    # =============================================================
     # Integrity report (gaps/flags)
+    # =============================================================
     integrity = build_integrity_report(
         particle_table=particle_table,
         processed_series=processed_series,
@@ -96,7 +144,7 @@ def build_session_alignment(
     )
 
     # tolerances (seconds)
-    tol = config.get("timestamp_tolerance_seconds", 2.0)  # conservative default
+    tol = config.get("timestamp_tolerance_seconds", 2.0)
 
     particle_to_frame: Dict[str, int] = {}
     processed_to_frame: Dict[str, int] = {}
@@ -104,7 +152,9 @@ def build_session_alignment(
     particle_times: Dict[str, datetime] = {}
     processed_times: Dict[str, datetime] = {}
 
-    # Map particle rows
+    # =============================================================
+    # Map particle rows → frames
+    # =============================================================
     if particle_table is not None and not particle_table.empty:
         if "particle_event_id" not in particle_table.columns:
             raise AlignmentError("particle_table missing particle_event_id")
@@ -116,6 +166,7 @@ def build_session_alignment(
             t = pd.to_datetime(r["t_utc"], utc=True, errors="coerce")
             if pd.isna(t):
                 continue
+
             t_py = t.to_pydatetime()
             particle_times[pid] = t_py
 
@@ -123,7 +174,9 @@ def build_session_alignment(
             if idx is not None:
                 particle_to_frame[pid] = int(idx)
 
-    # Map processed rows
+    # =============================================================
+    # Map processed rows → frames
+    # =============================================================
     if processed_series is not None and not processed_series.empty:
         if "processed_row_id" not in processed_series.columns:
             raise AlignmentError("processed_series missing processed_row_id")
@@ -135,6 +188,7 @@ def build_session_alignment(
             t = pd.to_datetime(r["t_utc"], utc=True, errors="coerce")
             if pd.isna(t):
                 continue
+
             t_py = t.to_pydatetime()
             processed_times[rid] = t_py
 
@@ -142,7 +196,9 @@ def build_session_alignment(
             if idx is not None:
                 processed_to_frame[rid] = int(idx)
 
+    # =============================================================
     # Compute offsets (median residuals)
+    # =============================================================
     off_particle = _median_offset_seconds(tb, particle_to_frame, particle_times)
     off_processed = _median_offset_seconds(tb, processed_to_frame, processed_times)
 
@@ -151,11 +207,24 @@ def build_session_alignment(
         "processed_vs_thermal": float(off_processed) if off_processed is not None else None,
     }
 
-    # Confidence: combine timebase confidence + mapping coverage
+    # =============================================================
+    # Confidence calculation
+    # =============================================================
     pt_cov = (len(particle_to_frame) / max(1, len(particle_times))) if particle_times else 0.0
     pr_cov = (len(processed_to_frame) / max(1, len(processed_times))) if processed_times else 0.0
-    cov = max(pt_cov, pr_cov)  # whichever provides better anchoring
+    cov = max(pt_cov, pr_cov)
+
     confidence = float(np.clip(0.6 * tb.confidence + 0.4 * cov, 0.0, 1.0))
+
+    # Serialize timestamps to ISO strings for artifact safety
+    fts = tb.frame_timestamps_utc
+    if fts is not None:
+        frame_ts_serialized = [
+            t.isoformat() if hasattr(t, "isoformat") else str(t)
+            for t in fts
+        ]
+    else:
+        frame_ts_serialized = None
 
     alignment = {
         "frame_timebase": {
@@ -163,7 +232,7 @@ def build_session_alignment(
             "confidence": tb.confidence,
             "t0_utc": tb.t0_utc,
             "dt_seconds": tb.dt_seconds,
-            "frame_timestamps_utc": tb.frame_timestamps_utc,
+            "frame_timestamps_utc": frame_ts_serialized,
         },
         "particle_to_frame": dict(sorted(particle_to_frame.items())),
         "processed_to_frame": dict(sorted(processed_to_frame.items())),

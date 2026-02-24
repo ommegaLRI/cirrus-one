@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Dict
+from pathlib import Path
 
 from deid.config.models import DEIDConfig
 
@@ -30,11 +31,18 @@ def _normalize(obj: Any) -> Any:
 
     if isinstance(obj, dict):
         return {k: _normalize(obj[k]) for k in sorted(obj.keys())}
+
     elif isinstance(obj, list):
         return [_normalize(v) for v in obj]
+
+    elif isinstance(obj, Path):
+        # CRITICAL FIX: make paths deterministic + JSON-safe
+        return obj.as_posix()
+
     elif hasattr(obj, "model_dump"):
-        # Pydantic v2
+        # Pydantic v2 models
         return _normalize(obj.model_dump())
+
     return obj
 
 

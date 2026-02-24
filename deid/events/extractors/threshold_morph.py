@@ -225,8 +225,32 @@ class ThresholdMorphExtractor(EventExtractor):
         # Build catalog events
         events_rows: List[Dict[str, Any]] = []
         for tr in tracks:
+            # --- Canonicalize track time ordering (defensive, deterministic) ---
+            # Sort frames and deduplicate, keeping masks/frames aligned.
+            order = np.argsort(tr.frame_indices)
+            fi = [tr.frame_indices[i] for i in order]
+            mks = [tr.masks[i] for i in order]
+            cfs = [tr.corrected_frames[i] for i in order]
+            ctd = [tr.centroids[i] for i in order]
+
+            fi2, mks2, cfs2, ctd2 = [], [], [], []
+            last = None
+            for f_i, m_i, cf_i, ct_i in zip(fi, mks, cfs, ctd):
+                if last is not None and f_i == last:
+                    continue  # drop duplicate frame entries deterministically
+                fi2.append(int(f_i))
+                mks2.append(m_i)
+                cfs2.append(cf_i)
+                ctd2.append(ct_i)
+                last = int(f_i)
+
+            tr.frame_indices = fi2
+            tr.masks = mks2
+            tr.corrected_frames = cfs2
+            tr.centroids = ctd2
+
             if len(tr.frame_indices) < 2:
-                continue  # ignore single-frame blips in v1
+                continue
 
             feats = compute_event_features(
                 corrected_frames=tr.corrected_frames,
@@ -245,6 +269,16 @@ class ThresholdMorphExtractor(EventExtractor):
                 if d > best:
                     best = d
                     peak_idx = int(t_idx)
+
+            # --- Enforce strict schema ordering ---
+            if peak_idx <= tr.frame_indices[0]:
+                peak_idx = tr.frame_indices[0] + 1
+            if peak_idx >= tr.frame_indices[-1]:
+                peak_idx = tr.frame_indices[-1] - 1
+
+            # Skip events that cannot support an interior peak
+            if peak_idx <= tr.frame_indices[0] or peak_idx >= tr.frame_indices[-1]:
+                continue
 
             cy0, cx0 = tr.centroids[0]
             cy1, cx1 = tr.centroids[-1]

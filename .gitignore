@@ -58,6 +58,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+tests/samples/
 
 # ----------------------
 # Type checkers / linters
