@@ -17,6 +17,7 @@ import pandas as pd
 
 from deid.core.errors import SchemaError
 from deid.core.versioning import SCHEMA_EVENT_CATALOG
+from deid.alignment.cadence import frame_index_to_time_utc
 
 
 def _json(obj: Any) -> str:
@@ -26,6 +27,7 @@ def _json(obj: Any) -> str:
 def build_event_catalog_df(
     *,
     events: List[Dict[str, Any]],
+    frame_timebase=None,   # <-- NEW OPTIONAL ARG (NON-BREAKING)
 ) -> pd.DataFrame:
     """
     events: list of dicts with keys:
@@ -37,17 +39,46 @@ def build_event_catalog_df(
       snr, overlap_score, fragmentation_score, saturation_flag, quality_flags (list),
       baseline_at_peak, noise_at_centroid, nonuniformity_at_centroid
     """
+
     rows = []
     for e in events:
+        frame_start = int(e["frame_start"])
+        frame_peak = int(e["frame_peak"])
+        frame_end = int(e["frame_end"])
+
+        # ------------------------------------------------------------------
+        # AUTO-FILL EVENT TIMESTAMPS IF MISSING
+        # ------------------------------------------------------------------
+        t_start_utc = e.get("t_start_utc")
+        t_peak_utc = e.get("t_peak_utc")
+        t_end_utc = e.get("t_end_utc")
+
+        if frame_timebase is not None:
+            if t_peak_utc is None:
+                t = frame_index_to_time_utc(frame_timebase, frame_peak)
+                if t is not None:
+                    t_peak_utc = t.isoformat()
+
+            if t_start_utc is None:
+                t = frame_index_to_time_utc(frame_timebase, frame_start)
+                if t is not None:
+                    t_start_utc = t.isoformat()
+
+            if t_end_utc is None:
+                t = frame_index_to_time_utc(frame_timebase, frame_end)
+                if t is not None:
+                    t_end_utc = t.isoformat()
+
         rows.append(
             {
                 "event_id": e["event_id"],
-                "frame_start": int(e["frame_start"]),
-                "frame_peak": int(e["frame_peak"]),
-                "frame_end": int(e["frame_end"]),
-                "t_start_utc": e.get("t_start_utc"),
-                "t_peak_utc": e.get("t_peak_utc"),
-                "t_end_utc": e.get("t_end_utc"),
+                "frame_start": frame_start,
+                "frame_peak": frame_peak,
+                "frame_end": frame_end,
+
+                "t_start_utc": t_start_utc,
+                "t_peak_utc": t_peak_utc,
+                "t_end_utc": t_end_utc,
 
                 "centroid_start_y": float(e["centroid_start_yx"][0]),
                 "centroid_start_x": float(e["centroid_start_yx"][1]),
@@ -82,11 +113,14 @@ def build_event_catalog_df(
         )
 
     df = pd.DataFrame(rows)
+
     if not df.empty:
-        # enforce invariant
         bad = df.query("frame_start >= frame_peak or frame_peak >= frame_end")
         if len(bad) > 0:
-            raise SchemaError("Invalid frame ordering in extracted events", details={"n_bad": int(len(bad))})
+            raise SchemaError(
+                "Invalid frame ordering in extracted events",
+                details={"n_bad": int(len(bad))},
+            )
 
         if df["event_id"].duplicated().any():
             raise SchemaError("Duplicate event_id detected in extracted events")

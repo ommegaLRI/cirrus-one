@@ -67,6 +67,15 @@ class RunnerConfig(DEIDBaseConfig):
     allow_stage_skip: bool = True
     fail_fast: bool = True
 
+# -------------------------------------------------------------------
+# Fusion configuration
+# -------------------------------------------------------------------
+
+
+class FusionConfig(BaseModel):
+    time_tolerance_s: float = 2.0
+    spatial_tolerance_px: float = 6.0
+
 
 # -------------------------------------------------------------------
 # Top-level config model
@@ -77,6 +86,7 @@ class DEIDConfig(DEIDBaseConfig):
     ingest: IngestConfig = IngestConfig()
     storage: StorageConfig = StorageConfig()
     runner: RunnerConfig = RunnerConfig()
+    fusion: FusionConfig = FusionConfig()
 
     # Placeholder for later stage configs
     alignment: dict = Field(default_factory=dict)

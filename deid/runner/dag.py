@@ -20,9 +20,10 @@ from typing import Dict, List, Optional, Set
 class StageDef:
     id: str
     depends_on: List[str] = field(default_factory=list)
-    outputs: List[str] = field(default_factory=list)          # relative paths within run bundle
-    optional_inputs: List[str] = field(default_factory=list)  # relative paths within run bundle
-    gated_by: List[str] = field(default_factory=list)         # relative paths within run bundle
+    outputs: List[str] = field(default_factory=list)          
+    optional_inputs: List[str] = field(default_factory=list)  
+    optional_outputs: List[str] = field(default_factory=list)
+    gated_by: List[str] = field(default_factory=list)         
 
 
 PIPELINE_VERSION: str = "v1"
@@ -71,12 +72,19 @@ def get_stage_defs() -> Dict[str, StageDef]:
             optional_inputs=["inputs/processed.parquet"],
             outputs=["outputs/swe_products.parquet", "outputs/closure_report.json"],
         ),
-        # StageDef(
-        #     id="inference",
-        #     depends_on=["swe_closure", "plate_state"],
-        #     gated_by=["intermediate/instrument_health.json", "outputs/closure_report.json"],
-        #     outputs=["outputs/findings.json", "outputs/regimes.json", "outputs/latent.json", "outputs/inference_skipped.json"],
-        # ),
+        StageDef(
+            id="inference",
+            depends_on=["swe_closure", "plate_state"],
+            gated_by=["intermediate/instrument_health.json", "outputs/closure_report.json"],
+            outputs=[
+                "outputs/findings.json",
+            ],
+            optional_outputs=[
+                "outputs/regimes.json",
+                "outputs/latent.json",
+                "outputs/inference_skipped.json",
+            ]
+        ),
         # StageDef(
         #     id="report",
         #     depends_on=["ingest", "alignment", "plate_state", "event_extract", "fusion", "swe_closure", "inference"],

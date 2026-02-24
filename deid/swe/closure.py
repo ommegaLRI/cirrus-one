@@ -42,7 +42,14 @@ def compute_closure(
     )
 
     a = merged["swe_reconstructed_mm"].fillna(0.0).values
-    b = merged["swe_mm"].fillna(0.0).values
+    # Accept canonical v1 name first
+    if "swe_processed_mm" in merged.columns:
+        b = merged["swe_processed_mm"].fillna(0.0).values
+    elif "swe_mm" in merged.columns:
+        # backward compatibility fallback
+        b = merged["swe_mm"].fillna(0.0).values
+    else:
+        raise KeyError("No processed SWE column found (expected swe_processed_mm)")
 
     resid = a - b
     nrmse = _normalized_rmse(a, b)

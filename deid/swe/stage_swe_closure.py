@@ -116,9 +116,19 @@ def swe_closure_stage(run_dir: Path, inputs: Dict[str, Any], config: DEIDConfig,
         swe_df = swe_df.merge(
             processed_df[["t_utc", "swe_mm"]],
             on="t_utc",
-            how="left"
+            how="left",
+            suffixes=("", "_processed"),
         )
-        swe_df["swe_residual_mm"] = swe_df["swe_reconstructed_mm"] - swe_df["swe_mm"]
+
+        # Rename explicitly to canonical name expected downstream
+        if "swe_mm_processed" in swe_df.columns:
+            swe_df["swe_processed_mm"] = swe_df["swe_mm_processed"]
+        elif "swe_mm" in swe_df.columns:
+            swe_df["swe_processed_mm"] = swe_df["swe_mm"]
+
+        swe_df["swe_residual_mm"] = (
+            swe_df["swe_reconstructed_mm"] - swe_df["swe_processed_mm"]
+        )
 
     # -------------------------------------------------------------
     # Write outputs

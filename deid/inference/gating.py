@@ -57,18 +57,51 @@ def _safe_float(x: Any) -> Optional[float]:
 
 def _gap_fraction_from_alignment(alignment_payload: Dict[str, Any]) -> Optional[float]:
     """
-    v1 gap fraction heuristic:
-    - If dt_seconds is known and we have gap intervals with delta_seconds, estimate:
-        gap_frames / T  (T unknown here) -> return None
-      Since we don't know T in this layer, we instead return:
-        total_gap_seconds / total_span_seconds (span from t0 to last mapped ts)
-    - If insufficient, return None.
+    Estimate fraction of timeline lost to gaps.
+
+    v1 heuristic:
+        gap_fraction ≈ total_gap_seconds / total_span_seconds
+
+    IMPORTANT SCIENTIFIC GUARDRAIL:
+    --------------------------------
+    If timestamps come from a constant-cadence inferred/synthetic timeline
+    (e.g. force_synthetic_timebase=True), then continuity is constructed
+    rather than observed. In that case gap_fraction is NOT physically
+    meaningful and must be disabled.
+
+    Returns:
+        float  -> estimated gap fraction
+        0.0    -> no gaps OR synthetic/inferred cadence
+        None   -> insufficient information
     """
+
+    import pandas as pd
+
+    ft = alignment_payload.get("frame_timebase", {}) or {}
+
+    # ------------------------------------------------------------------
+    # Synthetic / inferred constant-cadence guardrail
+    # ------------------------------------------------------------------
+    # Detect constructed timelines:
+    # If we have explicit frame_timestamps + dt_seconds, alignment likely
+    # generated timestamps from a synthetic cadence. Disable gap gating.
+    ts = ft.get("frame_timestamps_utc")
+    dt = _safe_float(ft.get("dt_seconds"))
+
+    if ts is not None and dt is not None:
+        # Constant cadence timeline → treat as synthetic for QC purposes
+        return 0.0
+
+    # ------------------------------------------------------------------
+    # Collect gaps
+    # ------------------------------------------------------------------
     gaps = alignment_payload.get("gaps", []) or []
     if not gaps:
         return 0.0
 
-    # total gap seconds
+    # ------------------------------------------------------------------
+    # Sum missing gap durations
+    # ------------------------------------------------------------------
     total_gap = 0.0
     for g in gaps:
         if g.get("kind") == "missing":
@@ -76,16 +109,15 @@ def _gap_fraction_from_alignment(alignment_payload: Dict[str, Any]) -> Optional[
             if ds is not None and ds > 0:
                 total_gap += ds
 
-    # estimate span from frame_timebase if possible (constant cadence + count unknown),
-    # else from gap endpoints (very rough).
-    ft = alignment_payload.get("frame_timebase", {}) or {}
-    t0 = ft.get("t0_utc")
-    dt = _safe_float(ft.get("dt_seconds"))
+    if total_gap <= 0:
+        return 0.0
 
-    # We do not have T. If alignment maps processed/particle times, estimate span using those map keys.
-    # We'll use gap endpoints: min start, max end.
+    # ------------------------------------------------------------------
+    # Estimate timeline span from gap endpoints
+    # ------------------------------------------------------------------
     starts = []
     ends = []
+
     for g in gaps:
         s = g.get("t_start_utc")
         e = g.get("t_end_utc")
@@ -96,14 +128,22 @@ def _gap_fraction_from_alignment(alignment_payload: Dict[str, Any]) -> Optional[
     if not starts or not ends:
         return None
 
-    # Parse ISO strings with numpy datetime64 (UTC assumed)
     try:
-        t_min = np.min(np.array(starts, dtype="datetime64[ns]"))
-        t_max = np.max(np.array(ends, dtype="datetime64[ns]"))
-        span_s = float((t_max - t_min) / np.timedelta64(1, "s"))
+        # Timezone-safe parsing
+        t_min = pd.to_datetime(starts, utc=True, errors="coerce").min()
+        t_max = pd.to_datetime(ends, utc=True, errors="coerce").max()
+
+        if pd.isna(t_min) or pd.isna(t_max):
+            return None
+
+        span_s = float((t_max - t_min).total_seconds())
         if span_s <= 0:
             return None
+
+        # NOTE:
+        # Do NOT clamp to [0,1]; values >1 expose structural issues.
         return float(total_gap / span_s)
+
     except Exception:
         return None
 
@@ -132,10 +172,10 @@ def evaluate_gating(
     if mode not in ("hard", "soft"):
         mode = "hard"
 
-    health_min = float(config.get("health_min", 0.70))
-    closure_min = float(config.get("closure_min", 0.60))
-    alignment_min = float(config.get("alignment_min", 0.60))
-    gap_fraction_max = float(config.get("gap_fraction_max", 0.05))
+    health_min = float(config.get("health_min", config.get("min_health_score", 0.70)))
+    closure_min = float(config.get("closure_min", config.get("min_closure_score", 0.60)))
+    alignment_min = float(config.get("alignment_min", config.get("min_alignment_confidence", 0.60)))
+    gap_fraction_max = float(config.get("gap_fraction_max", config.get("max_gap_fraction", 0.05)))
 
     reasons: List[str] = []
     metrics: Dict[str, Any] = {}

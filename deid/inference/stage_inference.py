@@ -48,7 +48,7 @@ from deid.inference.gating import evaluate_gating, gating_decision_to_dict, make
 from deid.inference.regimes import run_regime_discovery
 from deid.inference.phenotype_vector import build_phenotype_vector
 from deid.inference.findings import make_finding, make_findings_report, Finding
-from deid.inference.latent import run_latent_inference   # <-- Tier 3 Phase 3 import
+from deid.inference.latent import run_latent_inference 
 
 
 def _load_wrapped_payload(path: Path) -> Dict[str, Any]:
@@ -146,7 +146,9 @@ def inference_stage(
         closure_report = {}
 
     event_df = read_parquet(inter / "event_catalog.parquet")
-    swe_products_df = _maybe_read_parquet(out / "swe_products.parquet") or _maybe_read_parquet(inter / "swe_products.parquet")
+    swe_products_df = _maybe_read_parquet(out / "swe_products.parquet")
+    if swe_products_df is None:
+        swe_products_df = _maybe_read_parquet(inter / "swe_products.parquet")
 
     # NEW: optional processed series for latent observation
     processed_df = _maybe_read_parquet(inp / "processed.parquet")
@@ -154,10 +156,14 @@ def inference_stage(
     plate_state_meta = _load_wrapped_payload(inter / "plate_state.json") if (inter / "plate_state.json").exists() else {}
 
     # ---- Configs ----
+    # Inference config lives under config.inference
     try:
-        gating_cfg = dict(config.gating)
+        inf_cfg = dict(getattr(config, "inference", {}))
     except Exception:
-        gating_cfg = {}
+        inf_cfg = {}
+
+    gating_cfg = dict(inf_cfg.get("gating", {}))
+    regimes_cfg = dict(inf_cfg.get("regimes", {}))
 
     try:
         regimes_cfg = dict(config.regimes)

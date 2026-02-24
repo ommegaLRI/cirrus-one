@@ -38,6 +38,7 @@ from deid.events.features import compute_event_features
 from deid.events.qc import compute_event_qc_metrics
 from deid.events.catalog import build_event_catalog_df
 from deid.events.masks.store import RLEMaskStore
+from deid.alignment.cadence import FrameTimebase
 
 
 def _open_dataset(ref: ThermalCubeRef) -> Tuple[h5py.File, h5py.Dataset]:
@@ -284,7 +285,6 @@ class ThresholdMorphExtractor(EventExtractor):
             cy1, cx1 = tr.centroids[-1]
 
             # edge proximity (0 center -> 1 edge)
-            # normalized by min distance to edge
             d_edge = min(cy0, cx0, (H - 1) - cy0, (W - 1) - cx0)
             edge_prox = float(1.0 - (d_edge / (min(H, W) / 2.0 + 1e-9)))
             edge_prox = float(np.clip(edge_prox, 0.0, 1.0))
@@ -349,7 +349,19 @@ class ThresholdMorphExtractor(EventExtractor):
                 }
             )
 
-        df = build_event_catalog_df(events=events_rows)
+        # ------------------------------------------------------------------
+        # Build FrameTimebase object from alignment payload (NO global vars)
+        # ------------------------------------------------------------------
+        ftb = alignment_payload.get("frame_timebase", {}) or {}
+        frame_timebase = FrameTimebase(
+            t0_utc=ftb.get("t0_utc"),
+            dt_seconds=ftb.get("dt_seconds"),
+            frame_timestamps_utc=ftb.get("frame_timestamps_utc"),
+            source=ftb.get("source"),
+            confidence=float(ftb.get("confidence", 0.0)) if ftb.get("confidence") is not None else 0.0,
+        )
+
+        df = build_event_catalog_df(events=events_rows, frame_timebase=frame_timebase)
 
         qc_report = {
             "schema_version": "event_qc_v1",

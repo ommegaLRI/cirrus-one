@@ -17,6 +17,8 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+import yaml
+
 from deid.config.models import DEIDConfig
 from deid.core.errors import DEIDError, ArtifactIOError
 from deid.core.logging import log_info, log_warning, log_error
@@ -38,9 +40,15 @@ def _write_error_blob(run_dir: Path, stage_id: str, tb: str) -> None:
     out.write_text(tb, encoding="utf-8")
 
 
-def _write_timings(run_dir: Path, timings: Dict[str, float], config_hash: str, input_hashes: Dict[str, str]) -> None:
+def _write_timings(
+    run_dir: Path,
+    timings: Dict[str, float],
+    config_hash: str,
+    input_hashes: Dict[str, str],
+) -> None:
     prov = provenance_dir(run_dir)
     prov.mkdir(parents=True, exist_ok=True)
+
     wrapped = wrap_artifact(
         payload={"stage_timings_s": dict(timings)},
         schema_version="timings_v1",
@@ -50,6 +58,25 @@ def _write_timings(run_dir: Path, timings: Dict[str, float], config_hash: str, i
         pipeline_version=PIPELINE_VERSION,
     )
     write_json(prov / "timings.json", wrapped)
+
+
+def _write_config_provenance(run_dir: Path, config: DEIDConfig, config_hash: str) -> None:
+    """
+    Persist the EXACT config used for this run.
+    This is critical both for provenance AND to debug config propagation.
+    """
+    prov = provenance_dir(run_dir)
+    prov.mkdir(parents=True, exist_ok=True)
+
+    # Write canonical config.yaml
+    cfg_path = prov / "config.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(config.model_dump(mode="json"), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    # Write config hash
+    (prov / "config_hash.txt").write_text(config_hash, encoding="utf-8")
 
 
 def run_sequential(
@@ -65,26 +92,21 @@ def run_sequential(
 ) -> Job:
     """
     Run pipeline sequentially.
-
-    Parameters
-    ----------
-    job : Job
-    run_dir : Path
-    inputs : dict
-        External input pointers (e.g. raw file paths) for stage functions.
-    config : DEIDConfig
-    config_hash : str
-    input_hashes : dict
-    stage_fns : dict
-        Mapping stage_id -> callable.
-    stop_after_stage : optional
-        If provided, stop after this stage completes (useful during bring-up).
     """
     stage_defs = get_stage_defs()
     order = topo_order(stage_defs)
 
+    # WRITE CONFIG PROVENANCE AT START
+    _write_config_provenance(run_dir, config, config_hash)
+
     job.mark_started()
-    log_info("job_started", job_id=job.job_id, session_id=job.session_id, run_id=job.run_id, run_dir=str(run_dir))
+    log_info(
+        "job_started",
+        job_id=job.job_id,
+        session_id=job.session_id,
+        run_id=job.run_id,
+        run_dir=str(run_dir),
+    )
 
     timings: Dict[str, float] = {}
 
@@ -92,18 +114,15 @@ def run_sequential(
         sd = stage_defs[stage_id]
         job.stage_status.setdefault(stage_id, StageState.NOT_STARTED)
 
-        # Allow bring-up to run only ingest, etc.
         if stop_after_stage is not None and stage_id not in order[: order.index(stop_after_stage) + 1]:
             continue
 
-        # If stage fn not registered, skip (during early bring-up)
         fn = stage_fns.get(stage_id)
         if fn is None:
             log_warning("stage_fn_missing_skipping", stage_id=stage_id)
             job.stage_status[stage_id] = StageState.SKIPPED
             continue
 
-        # Idempotent skip check
         if stage_is_done(
             run_dir,
             stage_id,
@@ -115,19 +134,21 @@ def run_sequential(
             job.stage_status[stage_id] = StageState.SKIPPED
             continue
 
-        # Execute stage
         log_info("stage_started", stage_id=stage_id)
         job.stage_status[stage_id] = StageState.RUNNING
         t0 = time.time()
 
         try:
+            # PASS CONFIG INTO EVERY STAGE
             context: Dict[str, Any] = {
                 "pipeline_version": PIPELINE_VERSION,
                 "stage_id": stage_id,
+                "config_hash": config_hash,
             }
+
             fn(run_dir, inputs, config, context)
 
-            # Verify expected outputs exist after stage
+            # Verify expected outputs exist
             missing = [rel for rel in sd.outputs if not (Path(run_dir) / rel).exists()]
             if missing:
                 raise ArtifactIOError(
@@ -135,7 +156,6 @@ def run_sequential(
                     details={"stage_id": stage_id, "missing_outputs": missing},
                 )
 
-            # Write done marker with output hashes
             write_stage_done_marker(
                 run_dir,
                 stage_id,
@@ -160,11 +180,15 @@ def run_sequential(
             tb = traceback.format_exc()
             _write_error_blob(run_dir, stage_id, tb)
 
-            # Serialize error (prefer DEIDError)
             if isinstance(e, DEIDError):
                 err_dict = e.to_dict()
             else:
-                err_dict = {"type": e.__class__.__name__, "code": "UNHANDLED", "message": str(e), "details": {}}
+                err_dict = {
+                    "type": e.__class__.__name__,
+                    "code": "UNHANDLED",
+                    "message": str(e),
+                    "details": {},
+                }
 
             job.errors[stage_id] = err_dict
             log_error("stage_failed", stage_id=stage_id, error=err_dict, elapsed_s=dt)

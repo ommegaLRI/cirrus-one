@@ -76,21 +76,47 @@ def build_time_bins(
 ) -> pd.DatetimeIndex:
     """
     Build bin edges/centers from frame timestamps.
-    Requires frame_timestamps_utc list. (Best practice for inference.)
+
+    Requirements:
+    - frame_timebase["frame_timestamps_utc"] must exist.
+    - Timestamps must be ISO UTC or convertible.
+
+    Notes:
+    - Uses lowercase 's' for pandas frequency (pandas >= 2.x).
+    - Returns left-closed bins covering [t0, t1].
     """
+
     ts = frame_timebase.get("frame_timestamps_utc")
     if ts is None:
-        raise ValueError("latent v1 requires frame_timestamps_utc in alignment frame_timebase")
+        raise ValueError(
+            "latent v1 requires frame_timestamps_utc in alignment frame_timebase"
+        )
 
-    t = pd.to_datetime(pd.Series(ts), utc=True, errors="coerce").dropna()
+    # ---- Parse timestamps safely ----
+    t = (
+        pd.to_datetime(pd.Series(ts), utc=True, errors="coerce")
+        .dropna()
+        .sort_values()
+    )
+
     if len(t) < 2:
         raise ValueError("insufficient frame timestamps for binning")
 
-    t0 = t.min()
-    t1 = t.max()
+    t0 = t.iloc[0]
+    t1 = t.iloc[-1]
 
-    # closed='left' bins: [t0, t0+bin)
-    bins = pd.date_range(start=t0.floor("S"), end=t1.ceil("S") + pd.Timedelta(seconds=bin_seconds), freq=f"{int(bin_seconds)}s", tz="UTC")
+    # ---- Normalize to second resolution (pandas >=2.x safe) ----
+    t0 = t0.floor("s")
+    t1 = t1.ceil("s")
+
+    # ---- Build bins ----
+    bins = pd.date_range(
+        start=t0,
+        end=t1 + pd.Timedelta(seconds=int(bin_seconds)),
+        freq=f"{int(bin_seconds)}s",   # lowercase s fixes your latent error
+        tz="UTC",
+    )
+
     return bins
 
 

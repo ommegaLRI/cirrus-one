@@ -1,16 +1,89 @@
+# -------------------------------------------------------------------
+# DEID Analysis Service — Default Configuration (v1)
+# -------------------------------------------------------------------
+
 ingest:
+  # All timestamps normalized to UTC internally.
   timezone: "America/New_York"
+
+  # Dataset path inside HDF5.
+  # null = auto-detect (your reader already handles this)
   hdf5_dataset_path: null
 
+
+# -------------------------------------------------------------------
+# Storage
+# -------------------------------------------------------------------
 storage:
+  # Root directory where run bundles are created.
   run_root: "./runs"
 
+
+# -------------------------------------------------------------------
+# Runner behavior
+# -------------------------------------------------------------------
 runner:
   allow_stage_skip: true
   fail_fast: true
 
-alignment: {}
+
+# -------------------------------------------------------------------
+# Alignment (Stage B)
+# -------------------------------------------------------------------
+alignment:
+  force_synthetic_timebase: true
+  synthetic_dt_seconds: 1.0
+  # IMPORTANT:
+  # Must be >= inferred cadence (dt_seconds ≈ 4.0 from your data).
+  # Allows nearest-frame rounding without rejecting valid matches.
+  timestamp_tolerance_seconds: 6.0
+  # Used only if cadence cannot be inferred from tables.
+  fallback_dt_seconds: 1.0
+  particle_time_offset_seconds: 1141
+
+
+# -------------------------------------------------------------------
+# Plate State (Stage C)
+# -------------------------------------------------------------------
 plate_state: {}
+
+
+# -------------------------------------------------------------------
+# Event Extraction (Stage D)
+# -------------------------------------------------------------------
 event_extraction: {}
+
+
+# -------------------------------------------------------------------
+# Fusion (Stage E)
+# -------------------------------------------------------------------
+fusion:
+  time_tolerance_s: 6.0
+  spatial_tolerance_px: 100.0
+
+
+# -------------------------------------------------------------------
+# SWE Reconstruction / Closure (Stage F)
+# -------------------------------------------------------------------
 swe: {}
-inference: {}
+
+
+# -------------------------------------------------------------------
+# Inference (Stage G)
+# -------------------------------------------------------------------
+inference:
+  enabled: true
+
+  gating:
+    min_health_score: 0.75
+    min_closure_score: 0.0     # keep permissive for now since calibration is immature
+    max_gap_fraction: 0.10
+
+  regimes:
+    method: "kmeans"
+    n_clusters: 3
+    features:
+      - "snr"
+      - "edge_proximity"
+      - "delta_peak"
+      - "duration_s"
