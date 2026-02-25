@@ -13,6 +13,7 @@ Responsibilities:
 Consumes only artifacts written by previous stages.
 """
 
+import pandas as pd
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,6 +65,50 @@ def _build_qc_summary(
         "recommendations": closure_report.get("recommendations", []),
     }
 
+def _export_event_catalog_json(
+    *,
+    run_dir: Path,
+    config_hash: str,
+    input_hashes: Dict[str, str],
+) -> None:
+    """
+    Export event_catalog.parquet → event_catalog.json
+
+    This is a deterministic, frontend-friendly representation
+    of the authoritative event catalog.
+
+    Rules:
+    - Preserve ordering by event_id
+    - Convert NaN → None
+    - Wrap with provenance metadata
+    """
+
+    inter = intermediate_dir(run_dir)
+    parquet_path = inter / "event_catalog.parquet"
+    json_path = inter / "event_catalog.json"
+
+    if not parquet_path.exists():
+        return
+
+    df = pd.read_parquet(parquet_path)
+
+    # Ensure deterministic ordering
+    if "event_id" in df.columns:
+        df = df.sort_values("event_id")
+
+    # Convert NaN → None
+    payload = df.where(pd.notnull(df), None).to_dict(orient="records")
+
+    wrapped = wrap_artifact(
+        payload=payload,
+        schema_version="event_catalog_json_v1",
+        config_hash=config_hash,
+        input_hashes=input_hashes,
+        artifact_type="event_catalog_json",
+    )
+
+    write_json(json_path, wrapped)
+
 
 def build_run_bundle(
     *,
@@ -73,6 +118,15 @@ def build_run_bundle(
 ) -> None:
     inter = intermediate_dir(run_dir)
     out = outputs_dir(run_dir)
+
+    # -------------------------------------------------
+    # Derived exports for frontend consumption
+    # -------------------------------------------------
+    _export_event_catalog_json(
+        run_dir=run_dir,
+        config_hash=config_hash,
+        input_hashes=input_hashes,
+    )
 
     instrument_health = _safe_load_payload(inter / "instrument_health.json")
     closure_report = _safe_load_payload(out / "closure_report.json")
