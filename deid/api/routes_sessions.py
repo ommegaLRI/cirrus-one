@@ -21,8 +21,8 @@ from deid.api.file_download import download_to_temp
 
 from deid.config.models import DEIDConfig
 from deid.config.hashing import compute_config_hash
-
 from deid.runner.execute import run_sequential
+from deid.runner.job import Job
 
 
 router = APIRouter()
