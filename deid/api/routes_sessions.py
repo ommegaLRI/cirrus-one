@@ -66,32 +66,19 @@ def analyze(req: AnalyzeRequest):
     config_hash = compute_config_hash(config)
 
     # ---------------------------------------------------
-    # Download files from Supabase signed URLs
-    # ---------------------------------------------------
-
-    try:
-        hdf5_path = download_to_temp(req.hdf5)
-
-        particle_path = download_to_temp(req.particle) if req.particle else None
-        processed_path = download_to_temp(req.processed) if req.processed else None
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"file download failed: {e}")
-
-    # ---------------------------------------------------
-    # Build inputs for pipeline
+    # Create pipeline inputs (URLs only for now)
     # ---------------------------------------------------
 
     inputs = {
         "session_id": req.session_id,
-        "particle": particle_path,
-        "processed": processed_path,
-        "hdf5": hdf5_path,
+        "particle_url": req.particle,
+        "processed_url": req.processed,
+        "hdf5_url": req.hdf5,
         "config_hash": config_hash,
     }
 
     # ---------------------------------------------------
-    # Start pipeline (same logic as CLI)
+    # Initialize pipeline job
     # ---------------------------------------------------
 
     job, run_dir, stage_fns, input_hashes, config_hash = start_pipeline(
@@ -103,14 +90,62 @@ def analyze(req: AnalyzeRequest):
     JOBS[job.job_id] = job
 
     # ---------------------------------------------------
-    # Run pipeline asynchronously
+    # Background worker
     # ---------------------------------------------------
 
-    threading.Thread(
-        target=_run_background,
-        args=(job, run_dir, inputs, config, input_hashes, stage_fns, config_hash),
-        daemon=True,
-    ).start()
+    def _background():
+
+        try:
+            # ---------------------------------------------
+            # Download files from Supabase signed URLs
+            # ---------------------------------------------
+
+            hdf5_path = download_to_temp(req.hdf5)
+
+            particle_path = (
+                download_to_temp(req.particle) if req.particle else None
+            )
+
+            processed_path = (
+                download_to_temp(req.processed) if req.processed else None
+            )
+
+            # Update inputs with local paths
+            inputs_local = {
+                "session_id": req.session_id,
+                "particle": particle_path,
+                "processed": processed_path,
+                "hdf5": hdf5_path,
+                "config_hash": config_hash,
+            }
+
+            # ---------------------------------------------
+            # Run pipeline
+            # ---------------------------------------------
+
+            _run_background(
+                job,
+                run_dir,
+                inputs_local,
+                config,
+                input_hashes,
+                stage_fns,
+                config_hash,
+            )
+
+        except Exception as e:
+            job.state = "FAILED"
+            job.error = str(e)
+
+    # ---------------------------------------------------
+    # Start background execution
+    # ---------------------------------------------------
+
+    threading.Thread(target=_background, daemon=True).start()
+
+    # ---------------------------------------------------
+    # Immediate response
+    # ---------------------------------------------------
 
     return JobStatusResponse(
         job_id=job.job_id,
