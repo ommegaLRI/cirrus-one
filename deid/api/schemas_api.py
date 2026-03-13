@@ -19,10 +19,11 @@ class AnalyzeRequest(BaseModel):
 
 
 class JobStatusResponse(BaseModel):
-    job_id: str
-    run_id: str
+    job_id: Optional[str] = None
+    run_id: Optional[str] = None
     state: str
     error: Optional[str] = None
+
 
 class JobDetailResponse(BaseModel):
     job_id: str

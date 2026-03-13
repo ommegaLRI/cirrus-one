@@ -21,29 +21,9 @@ from deid.api.file_download import download_to_temp
 
 from deid.config.models import DEIDConfig
 from deid.config.hashing import compute_config_hash
-from deid.runner.execute import run_sequential
-from deid.runner.job import Job
 
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------
-# Background execution
-# ---------------------------------------------------------
-
-def _run_background(job, run_dir, inputs, config, input_hashes, stage_fns, config_hash):
-    run_sequential(
-        job=job,
-        run_dir=run_dir,
-        inputs=inputs,
-        config=config,
-        config_hash=config_hash,
-        input_hashes=input_hashes,
-        stage_fns=stage_fns,
-    )
-
-    JOBS[job.job_id] = job
 
 
 # ---------------------------------------------------------
@@ -66,20 +46,12 @@ def analyze(req: AnalyzeRequest):
     config_hash = compute_config_hash(config)
 
     # ---------------------------------------------------
-    # Create job immediately
-    # ---------------------------------------------------
-
-    job = Job.create(session_id=req.session_id)
-    JOBS[job.job_id] = job
-
-    # ---------------------------------------------------
     # Background worker
     # ---------------------------------------------------
 
     def _background():
 
         try:
-
             # ---------------------------------------------
             # Download files from Supabase
             # ---------------------------------------------
@@ -103,33 +75,24 @@ def analyze(req: AnalyzeRequest):
             }
 
             # ---------------------------------------------
-            # Start pipeline (only once)
+            # Start pipeline
+            # IMPORTANT:
+            # start_pipeline() already invokes run_pipeline(),
+            # and your logs show that run_pipeline() already
+            # executes the stages. So DO NOT call any second
+            # runner after this.
             # ---------------------------------------------
 
-            job2, run_dir, stage_fns, input_hashes, config_hash2 = start_pipeline(
+            job, run_dir, stage_fns, input_hashes, config_hash2 = start_pipeline(
                 session_id=req.session_id,
                 config=config,
                 inputs=inputs,
-                job=job,
             )
 
-            # ---------------------------------------------
-            # Execute pipeline
-            # ---------------------------------------------
-
-            _run_background(
-                job2,
-                run_dir,
-                inputs,
-                config,
-                input_hashes,
-                stage_fns,
-                config_hash2,
-            )
+            JOBS[job.job_id] = job
 
         except Exception as e:
-            job.state = "FAILED"
-            job.error = str(e)
+            print("background pipeline failed:", e)
 
     # ---------------------------------------------------
     # Launch background thread
@@ -139,10 +102,12 @@ def analyze(req: AnalyzeRequest):
 
     # ---------------------------------------------------
     # Immediate response
+    # job_id/run_id are not available yet because the
+    # pipeline is started inside the background thread.
     # ---------------------------------------------------
 
     return JobStatusResponse(
-        job_id=job.job_id,
+        job_id=None,
         run_id=None,
-        state=job.state,
+        state="QUEUED",
     )
