@@ -66,19 +66,19 @@ def analyze(req: AnalyzeRequest):
     config_hash = compute_config_hash(config)
 
     # ---------------------------------------------------
-    # Create pipeline inputs (URLs only for now)
+    # Placeholder inputs (paths filled later)
     # ---------------------------------------------------
 
     inputs = {
         "session_id": req.session_id,
-        "particle_url": req.particle,
-        "processed_url": req.processed,
-        "hdf5_url": req.hdf5,
+        "particle": None,
+        "processed": None,
+        "hdf5": None,
         "config_hash": config_hash,
     }
 
     # ---------------------------------------------------
-    # Initialize pipeline job
+    # Initialize pipeline
     # ---------------------------------------------------
 
     job, run_dir, stage_fns, input_hashes, config_hash = start_pipeline(
@@ -96,10 +96,7 @@ def analyze(req: AnalyzeRequest):
     def _background():
 
         try:
-            # ---------------------------------------------
-            # Download files from Supabase signed URLs
-            # ---------------------------------------------
-
+            # Download files from Supabase
             hdf5_path = download_to_temp(req.hdf5)
 
             particle_path = (
@@ -110,7 +107,6 @@ def analyze(req: AnalyzeRequest):
                 download_to_temp(req.processed) if req.processed else None
             )
 
-            # Update inputs with local paths
             inputs_local = {
                 "session_id": req.session_id,
                 "particle": particle_path,
@@ -118,10 +114,6 @@ def analyze(req: AnalyzeRequest):
                 "hdf5": hdf5_path,
                 "config_hash": config_hash,
             }
-
-            # ---------------------------------------------
-            # Run pipeline
-            # ---------------------------------------------
 
             _run_background(
                 job,
@@ -138,7 +130,7 @@ def analyze(req: AnalyzeRequest):
             job.error = str(e)
 
     # ---------------------------------------------------
-    # Start background execution
+    # Launch thread
     # ---------------------------------------------------
 
     threading.Thread(target=_background, daemon=True).start()
