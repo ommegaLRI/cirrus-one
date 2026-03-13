@@ -13,18 +13,66 @@ import numpy as np
 import pandas as pd
 
 
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+
+
 def _normalized_rmse(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Compute normalized RMSE between two arrays.
+
+    Normalization uses max(|b|) to produce a scale-independent metric.
+    """
+
     if len(a) == 0:
         return 1.0
+
     err = np.sqrt(np.mean((a - b) ** 2))
     scale = max(np.max(np.abs(b)), 1e-6)
+
     return float(err / scale)
+
+
+# -------------------------------------------------------------------
+# Main closure computation
+# -------------------------------------------------------------------
 
 
 def compute_closure(
     swe_df: pd.DataFrame,
     processed_df: pd.DataFrame | None,
 ) -> Dict[str, Any]:
+    """
+    Compare reconstructed SWE series with processed SWE series.
+
+    Parameters
+    ----------
+    swe_df
+        DataFrame with reconstructed SWE time series.
+
+        Expected columns:
+            - t_utc
+            - swe_reconstructed_mm
+
+    processed_df
+        DataFrame with processed SWE reference.
+
+        Expected columns:
+            - t_utc
+            - swe_processed_mm (preferred)
+            OR swe_mm (legacy)
+
+    Returns
+    -------
+    dict
+        Closure report structure.
+    """
+
+    # ---------------------------------------------------------------
+    # Handle missing processed series
+    # ---------------------------------------------------------------
+
     if processed_df is None or processed_df.empty:
         return {
             "closure_score": None,
@@ -34,33 +82,76 @@ def compute_closure(
             "recommendations": [],
         }
 
+    # ---------------------------------------------------------------
+    # Validate required columns
+    # ---------------------------------------------------------------
+
+    if "t_utc" not in swe_df.columns:
+        raise KeyError("swe_df missing required column 't_utc'")
+
+    if "swe_reconstructed_mm" not in swe_df.columns:
+        raise KeyError("swe_df missing required column 'swe_reconstructed_mm'")
+
+    if "t_utc" not in processed_df.columns:
+        raise KeyError("processed_df missing required column 't_utc'")
+
+    # ---------------------------------------------------------------
+    # Sort before merge_asof
+    # ---------------------------------------------------------------
+
+    swe_df = swe_df.sort_values("t_utc")
+    processed_df = processed_df.sort_values("t_utc")
+
+    # ---------------------------------------------------------------
+    # Align time series
+    # ---------------------------------------------------------------
+
     merged = pd.merge_asof(
-        swe_df.sort_values("t_utc"),
-        processed_df.sort_values("t_utc"),
+        swe_df,
+        processed_df,
         on="t_utc",
         direction="nearest",
     )
 
-    a = merged["swe_reconstructed_mm"].fillna(0.0).values
+    # ---------------------------------------------------------------
+    # Extract SWE arrays
+    # ---------------------------------------------------------------
+
+    a = merged["swe_reconstructed_mm"].fillna(0.0).astype(float).values
+
     # Accept canonical v1 name first
     if "swe_processed_mm" in merged.columns:
-        b = merged["swe_processed_mm"].fillna(0.0).values
+        b = merged["swe_processed_mm"].fillna(0.0).astype(float).values
+
+    # Backward compatibility
     elif "swe_mm" in merged.columns:
-        # backward compatibility fallback
-        b = merged["swe_mm"].fillna(0.0).values
+        b = merged["swe_mm"].fillna(0.0).astype(float).values
+
     else:
-        raise KeyError("No processed SWE column found (expected swe_processed_mm)")
+        raise KeyError(
+            "No processed SWE column found (expected 'swe_processed_mm' or 'swe_mm')"
+        )
+
+    # ---------------------------------------------------------------
+    # Residuals
+    # ---------------------------------------------------------------
 
     resid = a - b
+
     nrmse = _normalized_rmse(a, b)
 
     closure_score = float(max(0.0, 1.0 - nrmse))
+
+    # ---------------------------------------------------------------
+    # Metrics
+    # ---------------------------------------------------------------
 
     return {
         "closure_score": closure_score,
         "residual_stats": {
             "mean": float(np.mean(resid)),
             "std": float(np.std(resid)),
+            "max_abs": float(np.max(np.abs(resid))),
         },
         "attribution": {},
         "failure_modes": [],

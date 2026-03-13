@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from deid.core.errors import ArtifactIOError
+from deid.core.versioning import PIPELINE_VERSION
 from deid.storage.hashing import sha256_file
 from deid.storage.io import read_json, write_json, wrap_artifact
 from deid.storage.paths import provenance_dir
@@ -89,7 +90,7 @@ def stage_is_done(
     Stage is considered DONE if:
     - all expected outputs exist
     - marker exists
-    - marker header matches config_hash and input_hashes exactly
+    - marker header matches pipeline_version, config_hash, and input_hashes exactly
     - output hashes match current file hashes
     """
     # All outputs must exist
@@ -102,6 +103,10 @@ def stage_is_done(
         return False
 
     header = marker.get("header", {})
+
+    if header.get("pipeline_version") != PIPELINE_VERSION:
+        return False
+
     if header.get("config_hash") != config_hash:
         return False
 

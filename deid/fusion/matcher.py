@@ -37,6 +37,27 @@ def _euclid(y0: float, x0: float, y1: float, x1: float) -> float:
     return float(np.hypot(y0 - y1, x0 - x1))
 
 
+def _particle_offset_for_reporting(alignment_payload: Dict[str, Any]) -> float:
+    """
+    Determine particle→thermal offset for timestamp reporting only.
+
+    Under the repaired alignment contract:
+
+        particle_offset_application == "alignment_mapping_only"
+
+    means the offset was applied inside alignment mapping and should
+    NOT be applied to particle_df itself, but we must apply it when
+    computing dt_s so timestamps align with event UTCs.
+    """
+    frame_tb = alignment_payload.get("frame_timebase", {}) or {}
+
+    if frame_tb.get("particle_offset_application") == "alignment_mapping_only":
+        return float(frame_tb.get("particle_time_offset_seconds", 0.0) or 0.0)
+
+    offsets = alignment_payload.get("offsets_seconds", {}) or {}
+    return float(offsets.get("particle_vs_thermal", 0.0) or 0.0)
+
+
 # -------------------------------------------------------------------
 # Matching
 # -------------------------------------------------------------------
@@ -126,12 +147,22 @@ def match_events(
     part_x = part_x[valid_mask]
     part_frames = part_frames[valid_mask]
 
-    # Optional timestamps
+    # -------------------------------------------------------------
+    # Optional timestamps (for dt_s reporting)
+    # -------------------------------------------------------------
     part_times = None
+
     if "t_utc" in particle_df.columns:
         part_times = pd.to_datetime(
-            particle_df.loc[valid_mask, "t_utc"], utc=True, errors="coerce"
+            particle_df.loc[valid_mask, "t_utc"],
+            utc=True,
+            errors="coerce",
         )
+
+        offset_s = _particle_offset_for_reporting(alignment_payload)
+
+        if offset_s != 0.0:
+            part_times = part_times + pd.to_timedelta(offset_s, unit="s")
 
     matches: List[Dict[str, Any]] = []
 
@@ -157,15 +188,22 @@ def match_events(
 
     for _, ev in event_df.iterrows():
 
+        fs = int(ev["frame_start"])
         fp = int(ev["frame_peak"])
+        fe = int(ev["frame_end"])
 
         cy = float(ev["centroid_start_y"])
         cx = float(ev["centroid_start_x"])
 
         # ---------------------------------------------------------
-        # Frame distance gating
+        # Frame distance gating against EVENT INTERVAL, not frame_peak
+        # distance = 0 for particles inside [fs, fe]
         # ---------------------------------------------------------
-        dt_frames = np.abs(part_frames - fp)
+        dt_frames = np.where(
+            part_frames < fs,
+            fs - part_frames,
+            np.where(part_frames > fe, part_frames - fe, 0.0),
+        )
 
         cand_idx = np.where(dt_frames <= tolerance_frames)[0]
 
@@ -173,7 +211,7 @@ def match_events(
         if debug_event_counter < 5:
             print("\nDEBUG EVENT", debug_event_counter)
             print("  event_id =", ev["event_id"])
-            print("  frame_peak =", fp)
+            print("  frame_start, frame_peak, frame_end =", fs, fp, fe)
             print("  min_dt_frames =", float(np.min(dt_frames)))
             print("  candidate_count =", len(cand_idx))
             debug_event_counter += 1

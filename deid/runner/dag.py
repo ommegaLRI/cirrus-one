@@ -26,7 +26,7 @@ class StageDef:
     gated_by: List[str] = field(default_factory=list)         
 
 
-PIPELINE_VERSION: str = "v1"
+PIPELINE_VERSION: str = "v2"
 
 
 def get_stage_defs() -> Dict[str, StageDef]:

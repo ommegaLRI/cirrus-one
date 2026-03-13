@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 from deid.alignment.aligner import build_session_alignment
 from deid.config.models import DEIDConfig
@@ -83,31 +83,6 @@ def _config_to_dict(obj: Any) -> Dict[str, Any]:
     return {}
 
 
-def _apply_particle_time_offset(
-    particle_df: Optional[pd.DataFrame],
-    offset_seconds: float,
-) -> Optional[pd.DataFrame]:
-    """
-    Apply configured particle->thermal time offset.
-
-    Convention:
-        corrected_particle_time = original_particle_time + offset_seconds
-    """
-    if particle_df is None or particle_df.empty:
-        return particle_df
-
-    out = particle_df.copy()
-
-    if "t_utc" not in out.columns:
-        return out
-
-    out["t_utc"] = pd.to_datetime(out["t_utc"], utc=True) + pd.to_timedelta(
-        float(offset_seconds), unit="s"
-    )
-
-    return out
-
-
 # -------------------------------------------------------------------
 # Stage Entry
 # -------------------------------------------------------------------
@@ -155,20 +130,14 @@ def alignment_stage(
     )
 
     # ---------------------------------------------------------------
-    # Apply configured particle time offset BEFORE alignment mapping
+    # IMPORTANT CONTRACT (Model A)
+    #
+    # Raw particle timestamps are authoritative.
+    # NO mutation occurs here.
+    #
+    # The declared particle offset is applied only inside the aligner
+    # during particle→frame mapping.
     # ---------------------------------------------------------------
-
-    particle_df_aligned = _apply_particle_time_offset(
-        particle_df=particle_df,
-        offset_seconds=particle_time_offset_seconds,
-    )
-
-    if particle_df is not None and not particle_df.empty:
-        log_info(
-            "alignment_particle_offset_applied",
-            particle_rows=len(particle_df),
-            offset_seconds=particle_time_offset_seconds,
-        )
 
     # ---------------------------------------------------------------
     # Compute alignment + integrity
@@ -176,18 +145,10 @@ def alignment_stage(
 
     alignment_dict, integrity_dict = build_session_alignment(
         thermal_ref=thermal_ref,
-        particle_table=particle_df_aligned,
+        particle_table=particle_df,
         processed_series=processed_df,
         config=align_cfg,
     )
-
-    # ---------------------------------------------------------------
-    # Ensure offsets_seconds is present and persisted
-    # ---------------------------------------------------------------
-
-    offsets_seconds = dict(alignment_dict.get("offsets_seconds", {}) or {})
-    offsets_seconds["particle_vs_thermal"] = particle_time_offset_seconds
-    alignment_dict["offsets_seconds"] = offsets_seconds
 
     # ===============================================================
     # ENFORCE FRAME TIMEBASE INVARIANT
@@ -207,16 +168,16 @@ def alignment_stage(
         dt = float(dt)
 
     frame_ts = ftb.get("frame_timestamps_utc")
-    if frame_ts is None:
+
+    # Only build timestamps if a real anchor exists
+    if frame_ts is None and ftb.get("t0_utc") is not None:
         T = int(thermal_ref.shape[0])
-        epoch0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        t0 = datetime.fromisoformat(ftb["t0_utc"])
 
         ftb["frame_timestamps_utc"] = [
-            (epoch0 + timedelta(seconds=i * dt)).isoformat()
+            (t0 + timedelta(seconds=i * dt)).isoformat()
             for i in range(T)
         ]
-        ftb["source"] = ftb.get("source") or "thermal_inferred"
-        ftb["confidence"] = float(min(ftb.get("confidence", 0.1), 0.1))
 
     alignment_dict["frame_timebase"] = ftb
 
@@ -230,10 +191,12 @@ def alignment_stage(
         n_frame_ts=len(ftb.get("frame_timestamps_utc") or []),
     )
 
+    offsets = alignment_dict.get("offsets_seconds", {}) or {}
+
     log_info(
         "alignment_offsets_final",
-        particle_vs_thermal=alignment_dict["offsets_seconds"].get("particle_vs_thermal"),
-        processed_vs_thermal=alignment_dict["offsets_seconds"].get("processed_vs_thermal"),
+        particle_vs_thermal=offsets.get("particle_vs_thermal"),
+        processed_vs_thermal=offsets.get("processed_vs_thermal"),
     )
 
     # ---------------------------------------------------------------

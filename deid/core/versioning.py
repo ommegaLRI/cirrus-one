@@ -20,7 +20,7 @@ from typing import Dict
 # Pipeline version
 # -------------------------------------------------------------------
 
-PIPELINE_VERSION: str = "v1"
+PIPELINE_VERSION: str = "v2"
 
 # -------------------------------------------------------------------
 # Schema versions (normative identifiers)
@@ -31,7 +31,7 @@ SCHEMA_PROCESSED: str = "processed_v1"
 SCHEMA_EVENT_CATALOG: str = "event_catalog_v1"
 SCHEMA_MATCHED_EVENTS: str = "matched_events_v1"
 SCHEMA_SWE_PRODUCTS: str = "swe_products_v1"
-SCHEMA_ALIGNMENT: str = "alignment_v1"
+SCHEMA_ALIGNMENT: str = "alignment_v2"
 SCHEMA_PLATE_STATE: str = "plate_state_v1"
 SCHEMA_FINDINGS: str = "findings_v1"
 

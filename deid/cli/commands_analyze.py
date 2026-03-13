@@ -166,21 +166,18 @@ def analyze_command(
     config: Optional[Path] = typer.Option(None, help="Config YAML"),
 ) -> None:
     """
-    Run DEID analysis pipeline (Phase 6: ingest only).
+    Run DEID analysis pipeline.
     """
 
     cfg = _load_config(config)
     config_hash = compute_config_hash(cfg)
 
-    # Build preliminary input hashes from raw files for run_id
-    # (manifest will recompute formally inside ingest)
     input_hashes: Dict[str, str] = {
         "thermal_hdf5": str(hdf5),
         "particle": str(particle) if particle else "",
         "processed": str(processed) if processed else "",
     }
 
-    # Stage registry
     stage_fns = {
         "ingest": ingest_stage,
         "alignment": alignment_stage,

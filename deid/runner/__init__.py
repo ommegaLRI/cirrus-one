@@ -13,18 +13,29 @@ from typing import Any, Dict, Optional
 from deid.config.hashing import compute_config_hash
 from deid.config.models import DEIDConfig
 from deid.core.ids import stable_id
+from deid.core.versioning import PIPELINE_VERSION
 from deid.runner.execute import run_sequential, StageCallable
 from deid.runner.job import Job
 from deid.storage.paths import run_root
 
 
-def compute_run_id(session_id: str, *, config_hash: str, input_hashes: Dict[str, str]) -> str:
+def compute_run_id(
+    session_id: str,
+    *,
+    config_hash: str,
+    input_hashes: Dict[str, str],
+) -> str:
     """
-    Stable run id derived from session_id + config_hash + input hashes.
+    Stable run id derived from:
+    - pipeline version
+    - session_id
+    - config_hash
+    - input hashes
     """
     return stable_id(
         "run",
         {
+            "pipeline_version": PIPELINE_VERSION,
             "session_id": session_id,
             "config_hash": config_hash,
             "input_hashes": dict(sorted(input_hashes.items())),
@@ -44,12 +55,24 @@ def run_pipeline(
     stop_after_stage: Optional[str] = None,
 ) -> tuple[Job, Path]:
     config_hash = compute_config_hash(config)
-    run_id = compute_run_id(session_id, config_hash=config_hash, input_hashes=input_hashes)
+    run_id = compute_run_id(
+        session_id,
+        config_hash=config_hash,
+        input_hashes=input_hashes,
+    )
+
     run_dir = run_root(run_root_dir, session_id, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     job = Job(
-        job_id=stable_id("job", {"session_id": session_id, "run_id": run_id}, length=16),
+        job_id=stable_id(
+            "job",
+            {
+                "session_id": session_id,
+                "run_id": run_id,
+            },
+            length=16,
+        ),
         session_id=session_id,
         run_id=run_id,
     )

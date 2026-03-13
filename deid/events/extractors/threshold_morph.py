@@ -134,7 +134,7 @@ class ThresholdMorphExtractor(EventExtractor):
         T, H, W = thermal_ref.shape
 
         k_sigma = float(config.get("k_sigma", 5.0))
-        min_area_px = int(config.get("min_area_px", 6))
+        min_area_px = 1
         max_link_dist = float(config.get("max_link_dist_px", 5.0))
         sat_threshold_counts = float(config.get("saturation_threshold_counts", 60000.0))
         dt_seconds = alignment_payload.get("frame_timebase", {}).get("dt_seconds", None)
@@ -156,7 +156,7 @@ class ThresholdMorphExtractor(EventExtractor):
                 mask = corrected < (-thr)
 
                 # simple morphology to remove speckle
-                mask = _open3(mask)
+                mask = mask
 
                 # components
                 comps = _components_bfs(mask)

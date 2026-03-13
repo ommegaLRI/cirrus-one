@@ -38,38 +38,6 @@ def _load_wrapped(path: Path) -> Dict[str, Any]:
     return w.get("payload", {})
 
 
-def _apply_particle_offset(
-    particle_df: pd.DataFrame,
-    alignment_payload: Dict[str, Any],
-) -> pd.DataFrame:
-    """
-    Apply particle->thermal time offset from alignment artifact.
-
-    Convention:
-        corrected_particle_time = particle_time + offset_seconds
-    """
-    offsets = alignment_payload.get("offsets_seconds", {}) or {}
-    offset_s = float(offsets.get("particle_vs_thermal", 0.0))
-
-    if offset_s == 0.0:
-        return particle_df
-
-    out = particle_df.copy()
-
-    if "t_utc" in out.columns:
-        out["t_utc"] = pd.to_datetime(out["t_utc"], utc=True) + pd.to_timedelta(
-            offset_s, unit="s"
-        )
-
-    log_info(
-        "fusion_particle_offset_applied",
-        offset_seconds=offset_s,
-        particle_rows=len(out),
-    )
-
-    return out
-
-
 # -------------------------------------------------------------------
 # Stage Entry
 # -------------------------------------------------------------------
@@ -110,11 +78,8 @@ def fusion_stage(
     event_df = read_parquet(event_path)
     alignment_payload = _load_wrapped(alignment_path)
 
-    # Apply particle→thermal clock offset
-    particle_df = _apply_particle_offset(particle_df, alignment_payload)
-
     # ---------------------------------------------------------------
-    # Normalize timestamps
+    # Normalize timestamps (no mutation of particle time)
     # ---------------------------------------------------------------
 
     if "t_utc" in particle_df.columns:
@@ -122,7 +87,6 @@ def fusion_stage(
 
     if "t_peak_utc" in event_df.columns:
         event_df["t_peak_utc"] = pd.to_datetime(event_df["t_peak_utc"], utc=True)
-
 
     # ---------------------------------------------------------------
     # Fusion configuration

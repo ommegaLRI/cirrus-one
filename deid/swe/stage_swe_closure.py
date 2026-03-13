@@ -45,16 +45,44 @@ def swe_closure_stage(run_dir: Path, inputs: Dict[str, Any], config: DEIDConfig,
     event_df = read_parquet(int_dir / "event_catalog.parquet")
     alignment = _load_wrapped(int_dir / "alignment.json")
 
+    # -------------------------------------------------------------
     # Rehydrate timestamps (JSON → datetime objects)
+    # -------------------------------------------------------------
     frame_timebase = alignment.get("frame_timebase", {})
 
     ts_list = frame_timebase.get("frame_timestamps_utc")
+
     if ts_list is not None:
-        # Convert serialized ISO strings back into timezone-aware datetime
         frame_timebase["frame_timestamps_utc"] = [
             pd.to_datetime(t, utc=True).to_pydatetime()
             for t in ts_list
         ]
+
+    # -------------------------------------------------------------
+    # Fallback: synthesize timestamps if missing
+    # -------------------------------------------------------------
+    if "frame_timestamps_utc" not in frame_timebase or not frame_timebase["frame_timestamps_utc"]:
+
+        dt_seconds = float(frame_timebase.get("dt_seconds", 1.0))
+
+        # derive number of frames needed from events
+        if not event_df.empty and "frame_end" in event_df.columns:
+            n_frames = int(event_df["frame_end"].max()) + 1
+        else:
+            n_frames = 1
+
+        start_time = pd.Timestamp.utcnow()
+
+        frame_timebase["frame_timestamps_utc"] = [
+            (start_time + pd.Timedelta(seconds=i * dt_seconds)).to_pydatetime()
+            for i in range(n_frames)
+        ]
+
+        log_info(
+            "frame_timestamps_synthesized",
+            n_frames=n_frames,
+            dt_seconds=dt_seconds,
+        )
 
     # -------------------------------------------------------------
     # Optional processed SWE
