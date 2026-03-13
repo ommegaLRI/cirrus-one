@@ -84,7 +84,7 @@ def swe_closure_stage(run_dir: Path, inputs: Dict[str, Any], config: DEIDConfig,
     # -------------------------------------------------------------
     # Calibrate mass from authoritative events
     # -------------------------------------------------------------
-    calib = EnergyLinearCalibrator()
+    calib = EnergyLinearCalibrator(a=3e-4)
     mass, uncert = calib.predict_mass(event_df)
     event_df["mass_mg_authoritative"] = mass
 

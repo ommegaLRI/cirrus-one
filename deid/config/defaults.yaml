@@ -2,12 +2,16 @@
 # DEID Analysis Service — Default Configuration (v1)
 # -------------------------------------------------------------------
 
+# -------------------------------------------------------------------
+# Ingest (Stage A)
+# -------------------------------------------------------------------
 ingest:
-  # All timestamps normalized to UTC internally.
+  # Local timezone of CSV timestamps.
+  # All timestamps are converted to UTC internally.
   timezone: "America/New_York"
 
   # Dataset path inside HDF5.
-  # null = auto-detect (your reader already handles this)
+  # null means the reader will auto-detect the dataset.
   hdf5_dataset_path: null
 
 
@@ -15,7 +19,7 @@ ingest:
 # Storage
 # -------------------------------------------------------------------
 storage:
-  # Root directory where run bundles are created.
+  # Root directory where run bundles are written.
   run_root: "./runs"
 
 
@@ -23,7 +27,10 @@ storage:
 # Runner behavior
 # -------------------------------------------------------------------
 runner:
+  # Allow stages to skip if inputs are missing
   allow_stage_skip: true
+
+  # Stop pipeline immediately on stage failure
   fail_fast: true
 
 
@@ -31,57 +38,135 @@ runner:
 # Alignment (Stage B)
 # -------------------------------------------------------------------
 alignment:
+
+  # If true, frame timestamps will be synthesized
+  # instead of relying on HDF5 metadata.
+  # Useful when thermal files lack reliable timestamps.
   force_synthetic_timebase: true
-  synthetic_dt_seconds: 1.0
-  # IMPORTANT:
-  # Must be >= inferred cadence (dt_seconds ≈ 4.0 from your data).
-  # Allows nearest-frame rounding without rejecting valid matches.
-  timestamp_tolerance_seconds: 6.0
-  # Used only if cadence cannot be inferred from tables.
-  fallback_dt_seconds: 1.0
-  particle_time_offset_seconds: 1141
+
+  # Synthetic frame spacing used when timestamps are missing.
+  # Your cube currently uses 4-second cadence.
+  synthetic_dt_seconds: 4.0
+
+  # Maximum difference allowed when mapping table timestamps
+  # to frame timestamps.
+  timestamp_tolerance_seconds: 8.0
+
+  # Global particle → thermal clock offset (seconds).
+  #
+  # Determined from analysis:
+  # particle_time + 1821s ≈ thermal_time
+  #
+  # This compensates for instrument clock mismatch.
+  particle_time_offset_seconds: 5966
+
+  # Fallback frame spacing if dt cannot be inferred.
+  fallback_dt_seconds: 4.0
 
 
 # -------------------------------------------------------------------
 # Plate State (Stage C)
 # -------------------------------------------------------------------
-plate_state: {}
+plate_state:
+  # Currently using default estimator parameters.
+  # Section left explicit for future tuning.
+  {}
 
 
 # -------------------------------------------------------------------
 # Event Extraction (Stage D)
 # -------------------------------------------------------------------
-event_extraction: {}
+event_extraction:
+  # Threshold multiplier relative to noise estimate.
+  # Higher values reduce false detections.
+  threshold_sigma: 4.0
+
+  # Minimum duration of an event (seconds)
+  min_event_duration_s: 2.0
+
+  # Minimum event area (pixels)
+  min_event_area_px: 5
+
+  # Allow events touching the plate edge
+  allow_edge_events: true
 
 
 # -------------------------------------------------------------------
 # Fusion (Stage E)
 # -------------------------------------------------------------------
 fusion:
-  time_tolerance_s: 6.0
-  spatial_tolerance_px: 100.0
+
+  # Maximum time difference between particle and event
+  # after alignment offset has been applied.
+  #
+  # With 4s frame cadence, 8 seconds allows ±2 frames.
+  time_tolerance_s: 8.0
+
+  # Maximum spatial distance between particle centroid
+  # and thermal centroid.
+  #
+  # Thermal heat plumes spread on the plate, so
+  # thermal centroids often shift from optical centroids.
+  #
+  # 10 px works well for a 75×90 sensor.
+  spatial_tolerance_px: 35.0
 
 
 # -------------------------------------------------------------------
 # SWE Reconstruction / Closure (Stage F)
 # -------------------------------------------------------------------
-swe: {}
+swe:
+
+  # Temporary linear calibration coefficient:
+  #
+  # mass_mg ≈ a * energy_proxy_E
+  #
+  # Estimated earlier from particle CSV comparison.
+  calibration_a: 0.0003
+
+  # Offset term (unused for now)
+  calibration_b: 0.0
+
+  # Sensing plate area (mm²)
+  # Replace with correct plate area when known.
+  sensing_area_mm2: 6750.0
+
+  # Water density (mg/mm³)
+  water_density_mg_per_mm3: 1.0
 
 
 # -------------------------------------------------------------------
 # Inference (Stage G)
 # -------------------------------------------------------------------
 inference:
+
+  # Enable higher-level inference only if QC passes.
   enabled: true
 
   gating:
+
+    # Minimum plate health score required
     min_health_score: 0.75
-    min_closure_score: 0.0     # keep permissive for now since calibration is immature
+
+    # Closure threshold for SWE reconstruction.
+    # Temporarily permissive while calibration is immature.
+    min_closure_score: 0.0
+
+    # Maximum allowed fraction of missing frames
     max_gap_fraction: 0.10
 
+
+  # -----------------------------------------------------------------
+  # Regime clustering
+  # -----------------------------------------------------------------
   regimes:
+
     method: "kmeans"
+
+    # Number of clusters to discover
     n_clusters: 3
+
+    # Event features used for clustering
     features:
       - "snr"
       - "edge_proximity"

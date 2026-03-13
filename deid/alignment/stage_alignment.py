@@ -18,7 +18,6 @@ from datetime import datetime, timezone, timedelta
 
 from deid.alignment.aligner import build_session_alignment
 from deid.config.models import DEIDConfig
-from deid.core.errors import AlignmentError
 from deid.core.logging import log_info
 from deid.core.types import ThermalCubeRef
 from deid.core.versioning import SCHEMA_ALIGNMENT
@@ -34,13 +33,79 @@ from deid.storage.paths import inputs_dir, intermediate_dir
 def _load_thermal_ref(run_dir: Path) -> ThermalCubeRef:
     ref_path = inputs_dir(run_dir) / "thermal_ref.json"
     data = read_json(ref_path)
-    return ThermalCubeRef(**data)
+    payload = data.get("payload", data)
+    return ThermalCubeRef(**payload)
 
 
 def _maybe_load_parquet(path: Path) -> Optional[pd.DataFrame]:
     if not path.exists():
         return None
     return read_parquet(path)
+
+
+def _config_to_dict(obj: Any) -> Dict[str, Any]:
+    """
+    Safely normalize a config subsection into a plain dict.
+
+    Supports:
+    - dict
+    - pydantic v2 models via model_dump()
+    - generic objects via __dict__
+    """
+    if obj is None:
+        return {}
+
+    if isinstance(obj, dict):
+        return dict(obj)
+
+    if hasattr(obj, "model_dump"):
+        try:
+            return dict(obj.model_dump())
+        except Exception:
+            pass
+
+    if hasattr(obj, "dict"):
+        try:
+            return dict(obj.dict())
+        except Exception:
+            pass
+
+    if hasattr(obj, "__dict__"):
+        try:
+            return {
+                k: v
+                for k, v in vars(obj).items()
+                if not k.startswith("_")
+            }
+        except Exception:
+            pass
+
+    return {}
+
+
+def _apply_particle_time_offset(
+    particle_df: Optional[pd.DataFrame],
+    offset_seconds: float,
+) -> Optional[pd.DataFrame]:
+    """
+    Apply configured particle->thermal time offset.
+
+    Convention:
+        corrected_particle_time = original_particle_time + offset_seconds
+    """
+    if particle_df is None or particle_df.empty:
+        return particle_df
+
+    out = particle_df.copy()
+
+    if "t_utc" not in out.columns:
+        return out
+
+    out["t_utc"] = pd.to_datetime(out["t_utc"], utc=True) + pd.to_timedelta(
+        float(offset_seconds), unit="s"
+    )
+
+    return out
 
 
 # -------------------------------------------------------------------
@@ -54,7 +119,6 @@ def alignment_stage(
     config: DEIDConfig,
     context: Dict[str, Any],
 ) -> None:
-
     log_info("alignment_stage_start", run_dir=str(run_dir))
 
     config_hash: str = inputs["config_hash"]
@@ -77,11 +141,34 @@ def alignment_stage(
     # Alignment configuration
     # ---------------------------------------------------------------
 
-    align_cfg: Dict[str, Any] = {}
-    try:
-        align_cfg = dict(config.alignment)
-    except Exception:
-        align_cfg = {}
+    align_cfg: Dict[str, Any] = _config_to_dict(getattr(config, "alignment", None))
+
+    fallback_dt_seconds = float(align_cfg.get("fallback_dt_seconds", 1.0))
+    particle_time_offset_seconds = float(
+        align_cfg.get("particle_time_offset_seconds", 0.0)
+    )
+
+    log_info(
+        "alignment_config_loaded",
+        fallback_dt_seconds=fallback_dt_seconds,
+        particle_time_offset_seconds=particle_time_offset_seconds,
+    )
+
+    # ---------------------------------------------------------------
+    # Apply configured particle time offset BEFORE alignment mapping
+    # ---------------------------------------------------------------
+
+    particle_df_aligned = _apply_particle_time_offset(
+        particle_df=particle_df,
+        offset_seconds=particle_time_offset_seconds,
+    )
+
+    if particle_df is not None and not particle_df.empty:
+        log_info(
+            "alignment_particle_offset_applied",
+            particle_rows=len(particle_df),
+            offset_seconds=particle_time_offset_seconds,
+        )
 
     # ---------------------------------------------------------------
     # Compute alignment + integrity
@@ -89,48 +176,64 @@ def alignment_stage(
 
     alignment_dict, integrity_dict = build_session_alignment(
         thermal_ref=thermal_ref,
-        particle_table=particle_df,
+        particle_table=particle_df_aligned,
         processed_series=processed_df,
         config=align_cfg,
     )
 
+    # ---------------------------------------------------------------
+    # Ensure offsets_seconds is present and persisted
+    # ---------------------------------------------------------------
+
+    offsets_seconds = dict(alignment_dict.get("offsets_seconds", {}) or {})
+    offsets_seconds["particle_vs_thermal"] = particle_time_offset_seconds
+    alignment_dict["offsets_seconds"] = offsets_seconds
+
     # ===============================================================
-    # 🔵 ENFORCE FRAME TIMEBASE INVARIANT (CRITICAL FIX)
+    # ENFORCE FRAME TIMEBASE INVARIANT
     # ===============================================================
 
-    ftb = alignment_dict.get("frame_timebase", {})
+    ftb = dict(alignment_dict.get("frame_timebase", {}) or {})
 
     dt = ftb.get("dt_seconds")
-    dt_missing = (
-        dt is None
-        or (isinstance(dt, float) and np.isnan(dt))
-    )
+    dt_missing = dt is None or (isinstance(dt, float) and np.isnan(dt))
 
     if dt_missing:
-        dt = float(align_cfg.get("fallback_dt_seconds", 1.0))
+        dt = fallback_dt_seconds
         ftb["dt_seconds"] = dt
         ftb["source"] = ftb.get("source") or "thermal_inferred"
         ftb["confidence"] = float(min(ftb.get("confidence", 0.1), 0.1))
+    else:
+        dt = float(dt)
 
-    if ftb.get("frame_timestamps_utc") is None:
+    frame_ts = ftb.get("frame_timestamps_utc")
+    if frame_ts is None:
         T = int(thermal_ref.shape[0])
         epoch0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
         ftb["frame_timestamps_utc"] = [
-            (epoch0 + timedelta(seconds=i * float(dt))).isoformat()
+            (epoch0 + timedelta(seconds=i * dt)).isoformat()
             for i in range(T)
         ]
-
         ftb["source"] = ftb.get("source") or "thermal_inferred"
         ftb["confidence"] = float(min(ftb.get("confidence", 0.1), 0.1))
 
     alignment_dict["frame_timebase"] = ftb
 
-    # 🔍 Debug proof that invariant is satisfied
+    # ---------------------------------------------------------------
+    # Debug proof that invariant is satisfied
+    # ---------------------------------------------------------------
+
     log_info(
         "alignment_timebase_final",
         dt_seconds=ftb.get("dt_seconds"),
         n_frame_ts=len(ftb.get("frame_timestamps_utc") or []),
+    )
+
+    log_info(
+        "alignment_offsets_final",
+        particle_vs_thermal=alignment_dict["offsets_seconds"].get("particle_vs_thermal"),
+        processed_vs_thermal=alignment_dict["offsets_seconds"].get("processed_vs_thermal"),
     )
 
     # ---------------------------------------------------------------

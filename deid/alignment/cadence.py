@@ -138,25 +138,26 @@ def build_frame_timebase(
 
     dt, conf, source = infer_frame_cadence(thermal_ref, particle_table, processed_series, config)
 
-    times = _extract_times_utc(particle_table) + _extract_times_utc(processed_series)
-    t0 = min(times) if times else None
+    # Thermal timeline must NOT be anchored to particle timestamps.
+    # If HDF5 metadata provides no absolute time, we use a relative clock.
 
-    if dt is None or t0 is None:
+    t0 = None
+
+    if dt is None:
         return FrameTimebase(
-            t0_utc=_to_utc_iso(t0) if t0 else None,
+            t0_utc=None,
             dt_seconds=None,
             frame_timestamps_utc=None,
-            source=source,
+            source="unknown",
             confidence=float(conf),
         )
 
-    # Build constant cadence spanning full cube length
-    # We store only t0 + dt (not full timestamps) to keep artifacts small.
+    # Relative timeline (frame 0 = t=0)
     return FrameTimebase(
-        t0_utc=_to_utc_iso(t0),
+        t0_utc=None,
         dt_seconds=float(dt),
         frame_timestamps_utc=None,
-        source=source if source != "unknown" else "inferred",
+        source="thermal_relative",
         confidence=float(conf),
     )
 

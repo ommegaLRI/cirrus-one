@@ -206,7 +206,6 @@ def analyze_command(
         input_hashes=input_hashes,
         inputs=inputs,
         stage_fns=stage_fns,
-        stop_after_stage="ingest",
     )
 
     typer.echo("")

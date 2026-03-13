@@ -186,7 +186,7 @@ def build_session_alignment(
             if pd.isna(t):
                 continue
 
-            if particle_offset_s != 0.0:
+            if particle_offset_s != 0.0 and tb.source != "synthetic_forced":
                 t = t + pd.to_timedelta(particle_offset_s, unit="s")
 
             t_py = t.to_pydatetime()
