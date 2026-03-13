@@ -66,27 +66,10 @@ def analyze(req: AnalyzeRequest):
     config_hash = compute_config_hash(config)
 
     # ---------------------------------------------------
-    # Placeholder inputs (paths filled later)
+    # Create job immediately
     # ---------------------------------------------------
 
-    inputs = {
-        "session_id": req.session_id,
-        "particle": None,
-        "processed": None,
-        "hdf5": None,
-        "config_hash": config_hash,
-    }
-
-    # ---------------------------------------------------
-    # Initialize pipeline
-    # ---------------------------------------------------
-
-    job, run_dir, stage_fns, input_hashes, config_hash = start_pipeline(
-        session_id=req.session_id,
-        config=config,
-        inputs=inputs,
-    )
-
+    job = Job.create(session_id=req.session_id)
     JOBS[job.job_id] = job
 
     # ---------------------------------------------------
@@ -96,7 +79,11 @@ def analyze(req: AnalyzeRequest):
     def _background():
 
         try:
+
+            # ---------------------------------------------
             # Download files from Supabase
+            # ---------------------------------------------
+
             hdf5_path = download_to_temp(req.hdf5)
 
             particle_path = (
@@ -107,7 +94,7 @@ def analyze(req: AnalyzeRequest):
                 download_to_temp(req.processed) if req.processed else None
             )
 
-            inputs_local = {
+            inputs = {
                 "session_id": req.session_id,
                 "particle": particle_path,
                 "processed": processed_path,
@@ -115,14 +102,29 @@ def analyze(req: AnalyzeRequest):
                 "config_hash": config_hash,
             }
 
+            # ---------------------------------------------
+            # Start pipeline (only once)
+            # ---------------------------------------------
+
+            job2, run_dir, stage_fns, input_hashes, config_hash2 = start_pipeline(
+                session_id=req.session_id,
+                config=config,
+                inputs=inputs,
+                job=job,
+            )
+
+            # ---------------------------------------------
+            # Execute pipeline
+            # ---------------------------------------------
+
             _run_background(
-                job,
+                job2,
                 run_dir,
-                inputs_local,
+                inputs,
                 config,
                 input_hashes,
                 stage_fns,
-                config_hash,
+                config_hash2,
             )
 
         except Exception as e:
@@ -130,7 +132,7 @@ def analyze(req: AnalyzeRequest):
             job.error = str(e)
 
     # ---------------------------------------------------
-    # Launch thread
+    # Launch background thread
     # ---------------------------------------------------
 
     threading.Thread(target=_background, daemon=True).start()
@@ -141,6 +143,6 @@ def analyze(req: AnalyzeRequest):
 
     return JobStatusResponse(
         job_id=job.job_id,
-        run_id=job.run_id,
+        run_id=None,
         state=job.state,
     )
